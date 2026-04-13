@@ -161,3 +161,13 @@ Panel visual rápido añadido
   - ENTRAR
   - MIRAR
   - ESPERAR
+
+
+FIX 4 aplicado
+--------------
+- filtro de mercado serio integrado
+- semáforo de mercado más exigente
+- opción nueva: bloquear compras si el mercado está débil
+- si el mercado sale débil y el bloqueo está activo:
+  - muestra "HOY NO OPERAR"
+  - corta la operativa del día

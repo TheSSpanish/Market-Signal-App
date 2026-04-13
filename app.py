@@ -93,9 +93,12 @@ def market_regime_label(bench_hist: pd.DataFrame) -> tuple[str, str, float]:
     close = pd.to_numeric(bench_hist["Close"], errors="coerce").dropna()
     if len(close) < 25:
         return "No evaluable", "GRIS", 0.0
+
     sma20 = close.rolling(20).mean().iloc[-1]
+    sma50 = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else sma20
     change_day = float((close.iloc[-1] / close.iloc[-2] - 1.0) * 100.0) if len(close) >= 2 else 0.0
-    if close.iloc[-1] > sma20 and change_day > -0.4:
+
+    if close.iloc[-1] > sma20 and sma20 >= sma50 and change_day > -0.5:
         return "Acompaña", "VERDE", change_day
     if change_day <= -1.0 or close.iloc[-1] < sma20:
         return "Débil", "ROJO", change_day
@@ -172,6 +175,7 @@ def build_config() -> dict:
 
         st.subheader("Panel visual rápido")
         rb_visual_min = st.number_input("R/B mínimo visual del día", min_value=1.0, max_value=5.0, value=1.8, step=0.1)
+        block_bad_market = st.checkbox("Bloquear compras si el mercado está débil", value=True)
 
     return {
         "capital_total": capital_total,
@@ -193,6 +197,7 @@ def build_config() -> dict:
         "entry_extension_max_pct": entry_extension_max_pct,
         "block_extended_entries": block_extended_entries,
         "rb_visual_min": rb_visual_min,
+        "block_bad_market": block_bad_market,
     }
 
 
@@ -400,6 +405,10 @@ def scan_watchlist_ui(config: dict) -> None:
         else:
             st.error("La lectura rápida del día no es buena. Mejor esperar salvo que tengas una señal muy clara y excepcional.")
 
+        if bench_label == "Débil" and bool(config.get("block_bad_market", True)):
+            st.error("❌ MERCADO DESFAVORABLE — HOY NO OPERAR")
+            return
+
         top3 = df.head(3).copy()
         st.markdown("### TOP 3 DEL DÍA" if not config.get("capital_mode", False) else "### TOP 3 BASE (antes del reparto de capital)")
         top_cols = st.columns(min(3, len(top3)))
@@ -457,6 +466,8 @@ def scan_watchlist_ui(config: dict) -> None:
             zone = row.get("Zona de entrada", "")
             rb = float(row.get("R/B neto", 0.0))
             sem = row.get("Semáforo", "")
+            if bench_label == "Débil" and bool(config.get("block_bad_market", True)):
+                return "ESPERAR"
             if sem == "VERDE" and zone == "Buena" and rb >= rb_min:
                 return "ENTRAR"
             if sem == "VERDE" and zone == "Aceptable" and rb >= rb_min:
@@ -553,6 +564,7 @@ def quick_help_ui() -> None:
         - El filtro de entrada detecta si compras demasiado lejos de la SMA20 y puede bloquear esas entradas extendidas.
         - El panel visual rápido te resume el día en: DÍA FAVORABLE / DÍA OPERABLE / MEJOR ESPERAR.
         - La columna "Acción rápida" te ayuda a ver de un vistazo si conviene ENTRAR, MIRAR o ESPERAR.
+        - Si activas el bloqueo de mercado débil, la app corta directamente las compras en días malos de mercado.
         """
     )
 
