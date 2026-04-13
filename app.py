@@ -9,8 +9,11 @@ import streamlit as st
 import yfinance as yf
 
 from market_signal import (
-    analyze_ticker,
+    DEFAULT_IBEX_TICKERS,
+    FILTERED_CONTINUO_TICKERS,
+    DEFAULT_WATCHLIST_TEXT,
     allocate_capital_top,
+    analyze_ticker,
     benchmark_for_ticker,
     format_currency,
     parse_watchlist,
@@ -21,50 +24,30 @@ APP_TITLE = "Market Signal App"
 EXPORT_DIR = Path(__file__).resolve().parent / "exports"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-
 st.markdown("""
 <style>
-/* Texto general */
 html, body, [class*="css"] {
     color: #f5f5f5 !important;
 }
-
-/* Dataframe base */
 [data-testid="stDataFrame"] {
     background-color: #111827 !important;
     color: #f9fafb !important;
     border-radius: 10px;
     overflow: hidden;
 }
-
-/* Cabecera tabla */
 [data-testid="stDataFrame"] th {
     background-color: #111827 !important;
     color: #f9fafb !important;
     font-weight: 700 !important;
     border-bottom: 1px solid #374151 !important;
 }
-
-/* Celdas */
 [data-testid="stDataFrame"] td {
     color: #f9fafb !important;
     border-color: #374151 !important;
 }
-
-/* Selectbox / inputs */
-div[data-baseweb="select"] * {
-    color: #f9fafb !important;
-}
-div[data-baseweb="select"] {
-    background-color: #111827 !important;
-}
-
-/* Botones */
 button {
     color: #ffffff !important;
 }
-
-/* Métricas */
 [data-testid="stMetric"] {
     background-color: #111827;
     padding: 10px;
@@ -76,7 +59,7 @@ button {
 st.title(APP_TITLE)
 st.caption("Herramienta heurística de apoyo a decisión. No es asesoramiento financiero ni una garantía de resultados.")
 
-DEFAULT_WATCHLIST = "^IBEX, ACS.MC, ACX.MC, AENA.MC, AMS.MC, ANA.MC, ANE.MC, BBVA.MC, BKT.MC, CABK.MC, CLNX.MC, COL.MC, ELE.MC, ENG.MC, FDR.MC, FER.MC, GRF.MC, IAG.MC, IBE.MC, IDR.MC, ITX.MC, LOG.MC, MAP.MC, MRL.MC, MTS.MC, NTGY.MC, PUIG.MC, RED.MC, REP.MC, ROVI.MC, SAB.MC, SAN.MC, SCYR.MC, SLR.MC, TEF.MC, UNI.MC, VIS.MC"
+DEFAULT_WATCHLIST = DEFAULT_WATCHLIST_TEXT
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -103,11 +86,28 @@ def get_name_cached(ticker: str) -> str:
         return ticker
 
 
+def build_watchlist_from_presets(include_ibex: bool, include_continuo: bool, custom_text: str) -> str:
+    tickers = []
+    if include_ibex:
+        tickers.extend(DEFAULT_IBEX_TICKERS)
+    if include_continuo:
+        tickers.extend(FILTERED_CONTINUO_TICKERS)
+    tickers.extend(parse_watchlist(custom_text))
+    return ", ".join(parse_watchlist(", ".join(tickers)))
+
+
+
 def build_config() -> dict:
     with st.sidebar:
         st.header("Configuración")
-        capital_total = st.number_input("Capital total (€)", min_value=100.0, value=10000.0, step=100.0)
-        risk_pct = st.slider("Riesgo por trade (%)", min_value=0.1, max_value=5.0, value=1.0, step=0.1)
+        capital_total = st.number_input("Capital total (€)", min_value=100.0, value=3000.0, step=100.0)
+        risk_pct = st.slider("Riesgo por trade (%)", min_value=0.1, max_value=5.0, value=1.5, step=0.1)
+
+        st.subheader("Modo capital completo")
+        capital_mode = st.checkbox("Priorizar invertir el capital del Top 1-3", value=True)
+        max_positions = st.slider("Máx. posiciones para capital completo", min_value=1, max_value=3, value=2, step=1)
+        st.caption("Si está activado, la salida principal se centra en las mejores 1–3 ideas y reparte ahí el capital.")
+
         commission_buy = st.number_input("Comisión compra (€)", min_value=0.0, value=1.0, step=0.5)
         commission_sell = st.number_input("Comisión venta (€)", min_value=0.0, value=1.0, step=0.5)
         apply_tobin = st.checkbox("Aplicar Tobin aprox. a acciones españolas (.MC)", value=True)
@@ -124,14 +124,18 @@ def build_config() -> dict:
             rb_net_min = 2.0
             st.info("Modo exigente activo: Coste/obj 25 | Coste/posic 1.0 | R/B neto 2.0")
 
-        st.subheader("Modo capital completo")
-        capital_mode = st.checkbox("Priorizar invertir el capital del Top 1-3", value=True)
-        max_positions = st.slider("Máx. posiciones para capital completo", min_value=1, max_value=3, value=2, step=1)
-        st.caption("Este modo reparte el capital total entre las mejores candidatas netas, en vez de dividirlo en mini posiciones por riesgo.")
+        st.subheader("Universo")
+        include_ibex = st.checkbox("Incluir IBEX", value=True)
+        include_continuo = st.checkbox("Incluir continuo filtrado", value=True)
+        min_price_filter = st.number_input("Precio mínimo (€)", min_value=0.1, max_value=100.0, value=3.0, step=0.5)
+        min_turnover_filter = st.number_input("Liquidez media mínima 20d (€)", min_value=10000.0, max_value=50000000.0, value=750000.0, step=50000.0)
+        max_atr_pct_filter = st.number_input("ATR % máximo", min_value=2.0, max_value=20.0, value=8.0, step=0.5)
 
     return {
         "capital_total": capital_total,
         "risk_pct": risk_pct / 100.0,
+        "capital_mode": capital_mode,
+        "max_positions": max_positions,
         "commission_buy": commission_buy,
         "commission_sell": commission_sell,
         "apply_tobin": apply_tobin,
@@ -139,9 +143,13 @@ def build_config() -> dict:
         "cost_obj_max_pct": cost_obj_max,
         "cost_pos_max_pct": cost_pos_max,
         "rb_net_min": rb_net_min,
-        "capital_mode": capital_mode,
-        "max_positions": max_positions,
+        "include_ibex": include_ibex,
+        "include_continuo": include_continuo,
+        "min_price_filter": min_price_filter,
+        "min_turnover_filter": min_turnover_filter,
+        "max_atr_pct_filter": max_atr_pct_filter,
     }
+
 
 
 def status_badge(color: str, label: str) -> str:
@@ -193,6 +201,11 @@ def render_detail(result: dict) -> None:
                 ("Capital mínimo recomendado", format_currency(result["Cap.min €"])),
                 ("Coste/obj %", f'{result["Coste/obj %"]:.2f}%'),
                 ("Coste/posic %", f'{result["Coste/posic %"]:.2f}%'),
+                ("ATR %", f'{result["ATR %"]:.2f}%'),
+                ("Volumen medio € 20d", format_currency(result["Volumen medio € 20d"])),
+                ("Mov. diario medio %", f'{result["Mov. diario medio %"]:.2f}%'),
+                ("Filtro universo", result["Filtro universo"]),
+                ("Motivo filtro", result["Motivo filtro"]),
             ],
             columns=["Métrica", "Valor"],
         )
@@ -200,9 +213,7 @@ def render_detail(result: dict) -> None:
     with right:
         st.markdown("**Notas**")
         st.write(result["Notas"])
-        st.caption(
-            "Las estimaciones a 5 y 20 sesiones son heurísticas basadas en estructura, momentum, volatilidad y fuerza relativa."
-        )
+        st.caption("Las estimaciones a 5 y 20 sesiones son heurísticas basadas en estructura, momentum, volatilidad y fuerza relativa.")
 
 
 def style_scan_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
@@ -234,21 +245,37 @@ def style_scan_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         "Cap.min €": "{:,.2f}",
         "Est. 5d %": "{:,.2f}%",
         "Est. 20d %": "{:,.2f}%",
+        "ATR %": "{:,.2f}%",
+        "Volumen medio € 20d": "{:,.0f}",
+        "Mov. diario medio %": "{:,.2f}%",
     }
     return df.style.apply(row_color, axis=1).format(fmt)
 
 
 def scan_watchlist_ui(config: dict) -> None:
     st.subheader("Escáner de watchlist")
-    watchlist_text = st.text_area("Tickers separados por comas", value=DEFAULT_WATCHLIST, height=110)
+
+    watchlist_text = st.text_area(
+        "Watchlist extra (además del IBEX / continuo filtrado que marques)",
+        value="",
+        height=90,
+        help="Aquí puedes añadir tickers extra separados por comas. El universo principal se controla desde la barra lateral.",
+    )
+
+    built_watchlist = build_watchlist_from_presets(
+        include_ibex=bool(config.get("include_ibex", True)),
+        include_continuo=bool(config.get("include_continuo", True)),
+        custom_text=watchlist_text,
+    )
+    st.caption(f"Universo activo: {built_watchlist}")
 
     c1, c2, c3 = st.columns([1, 1, 1.2])
     only_operable = c1.checkbox("Solo candidatas operables", value=False)
-    only_operable_net = c2.checkbox("Solo candidatas operables netas", value=False)
+    only_operable_net = c2.checkbox("Solo candidatas operables netas", value=True)
     run_scan = c3.button("Escanear watchlist", type="primary", use_container_width=True)
 
     if run_scan:
-        tickers = parse_watchlist(watchlist_text)
+        tickers = parse_watchlist(built_watchlist)
         if not tickers:
             st.warning("No hay tickers válidos.")
             return
@@ -276,8 +303,11 @@ def scan_watchlist_ui(config: dict) -> None:
             st.error("No se pudieron calcular resultados.")
             return
 
-        df = pd.DataFrame(results)
-        df = df.sort_values(["Score", "R/B neto", "Rel. 1m"], ascending=[False, False, False]).reset_index(drop=True)
+        df_all = pd.DataFrame(results)
+        df_all = df_all.sort_values(["Score", "R/B neto", "Rel. 1m"], ascending=[False, False, False]).reset_index(drop=True)
+
+        filtered_out = df_all[df_all["Filtro universo"] == "No"].copy()
+        df = df_all[df_all["Filtro universo"] == "Sí"].copy()
         df.insert(0, "Ranking", range(1, len(df) + 1))
 
         if only_operable:
@@ -287,12 +317,19 @@ def scan_watchlist_ui(config: dict) -> None:
 
         if df.empty:
             st.info("Tras aplicar los filtros no quedan candidatas.")
+            if not filtered_out.empty:
+                st.markdown("#### Valores descartados por filtro de universo")
+                st.dataframe(
+                    filtered_out[["Ticker", "Precio actual", "Volumen medio € 20d", "ATR %", "Motivo filtro"]].head(15),
+                    hide_index=True,
+                    use_container_width=True,
+                )
             return
 
         st.session_state["last_scan_df"] = df.copy()
 
         top3 = df.head(3).copy()
-        st.markdown("### TOP 3 DEL DÍA")
+        st.markdown("### TOP 3 DEL DÍA" if not config.get("capital_mode", False) else "### TOP 3 BASE (antes del reparto de capital)")
         top_cols = st.columns(min(3, len(top3)))
         for idx, (_, row) in enumerate(top3.iterrows()):
             with top_cols[idx]:
@@ -305,6 +342,7 @@ def scan_watchlist_ui(config: dict) -> None:
         if st.button("Ver Top 3 del día"):
             st.dataframe(top3, hide_index=True, use_container_width=True)
 
+        alloc_df = None
         if config.get("capital_mode", False):
             alloc_df = allocate_capital_top(
                 df=df,
@@ -340,15 +378,33 @@ def scan_watchlist_ui(config: dict) -> None:
                     "Precio actual": "{:,.2f}",
                 }
                 st.dataframe(alloc_df.style.format(fmt_alloc), hide_index=True, use_container_width=True)
-                st.caption("Aquí el sistema deja de priorizar mini posiciones por riesgo y reparte el capital total entre las mejores 1–3 candidatas netas.")
+                st.caption("Aquí el sistema reparte el capital total entre las mejores 1–3 candidatas netas y la salida principal se centra en ellas.")
 
         columns_to_show = [
             "Ranking", "Ticker", "Precio actual", "Score", "Señal", "Tendencia", "Confianza",
             "Rel. 1m", "Rel. 3m", "Est. 5d", "Est. 20d", "Stop", "Objetivo", "Dist.stop",
             "R/B", "R/B neto", "Costes", "Coste/obj %", "Coste/posic %", "Posic. €",
-            "Benef. neto €", "Cap.min €", "Semáforo", "Operable", "Operable neta"
+            "Benef. neto €", "Cap.min €", "ATR %", "Volumen medio € 20d", "Mov. diario medio %",
+            "Semáforo", "Operable", "Operable neta"
         ]
-        st.dataframe(style_scan_table(df[columns_to_show]), hide_index=True, use_container_width=True)
+
+        if config.get("capital_mode", False) and alloc_df is not None and not alloc_df.empty:
+            selected_tickers = alloc_df["Ticker"].tolist()
+            df_main = df[df["Ticker"].isin(selected_tickers)].copy()
+            df_main = df_main.sort_values(["Score", "R/B neto", "Rel. 1m"], ascending=[False, False, False]).reset_index(drop=True)
+            df_main.insert(0, "Ranking visible", range(1, len(df_main) + 1))
+            st.markdown("### Resumen de las posiciones elegidas")
+            st.dataframe(style_scan_table(df_main[columns_to_show]), hide_index=True, use_container_width=True)
+        else:
+            st.dataframe(style_scan_table(df[columns_to_show]), hide_index=True, use_container_width=True)
+
+        if not filtered_out.empty:
+            with st.expander("Ver valores descartados por filtro de universo"):
+                st.dataframe(
+                    filtered_out[["Ticker", "Precio actual", "Volumen medio € 20d", "ATR %", "Mov. diario medio %", "Motivo filtro"]],
+                    hide_index=True,
+                    use_container_width=True,
+                )
 
         detail_ticker = st.selectbox(
             "Ver detalle de un ticker del último escaneo",
@@ -374,56 +430,53 @@ def scan_watchlist_ui(config: dict) -> None:
 
 def individual_analysis_ui(config: dict) -> None:
     st.subheader("Análisis individual")
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        ticker = st.text_input("Ticker", value="VIS.MC").strip().upper()
-    with c2:
-        analyze_btn = st.button("Analizar ticker", type="primary", use_container_width=True)
+    ticker = st.text_input("Ticker", value="IBE.MC").strip().upper()
+    analyze_button = st.button("Analizar ticker")
 
-    if analyze_btn and ticker:
-        with st.spinner("Descargando datos y calculando..."):
+    if analyze_button and ticker:
+        with st.spinner("Calculando análisis..."):
             hist = get_history_cached(ticker)
-            bench = benchmark_for_ticker(ticker)
-            bench_hist = get_history_cached(bench)
+            bench = get_history_cached(benchmark_for_ticker(ticker))
             result = analyze_ticker(
                 ticker=ticker,
                 hist=hist,
-                benchmark_hist=bench_hist,
+                benchmark_hist=bench,
                 display_name=get_name_cached(ticker),
                 config=config,
             )
-
         if not result:
-            st.error("No se pudo calcular el análisis con los datos recibidos.")
+            st.error("No se pudo analizar el ticker.")
             return
 
-        st.markdown(f"### {result['Nombre']}")
+        st.markdown(f"### {result['Ticker']} — {result['Nombre']}")
         render_detail(result)
 
 
-config = build_config()
-
-tab1, tab2, tab3 = st.tabs(["Análisis individual", "Escáner", "Ayuda rápida"])
-
-with tab1:
-    individual_analysis_ui(config)
-
-with tab2:
-    scan_watchlist_ui(config)
-
-with tab3:
+def quick_help_ui() -> None:
+    st.subheader("Ayuda rápida")
     st.markdown(
         """
-        **Cómo usarla**
-        1. Ajusta capital, riesgo y costes en la barra lateral.  
-        2. Escanea tu watchlist o analiza un ticker concreto.  
-        3. Prioriza señales con semáforo VERDE y operabilidad neta.  
-        4. Contrasta siempre con tu propio criterio.
-
         **Importante**
         - La app usa datos de Yahoo Finance vía `yfinance`.
         - Las estimaciones son orientativas y heurísticas.
         - El modelo está pensado para largos (compras), no para cortos.
-        - Si activas **Modo capital completo**, la app prioriza repartir el capital total entre las mejores 1–3 candidatas netas, en vez de seguir el tamaño de posición clásico por riesgo.
+        - Ahora puedes mezclar IBEX + continuo filtrado.
+        - El filtro de universo intenta evitar chicharros mediante precio mínimo, liquidez mínima y ATR % máximo.
+        - El modo capital completo reparte el capital total entre las mejores 1–3 candidatas netas.
         """
     )
+
+
+def main() -> None:
+    config = build_config()
+    t1, t2, t3 = st.tabs(["Análisis individual", "Escáner", "Ayuda rápida"])
+    with t1:
+        individual_analysis_ui(config)
+    with t2:
+        scan_watchlist_ui(config)
+    with t3:
+        quick_help_ui()
+
+
+if __name__ == "__main__":
+    main()

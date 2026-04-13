@@ -98,16 +98,41 @@ Descargo de responsabilidad
 Esta app no garantiza resultados ni sustituye tu análisis.
 Úsala como apoyo y contrasta siempre cualquier operación.
 
+Versión nueva: IBEX + continuo filtrado
+---------------------------------------
+Cambios añadidos:
+- universo mezclado de IBEX + continuo filtrado
+- filtro automático anti-chicharros:
+  - precio mínimo
+  - liquidez media mínima 20d
+  - ATR % máximo
+- tabla con columnas extra de liquidez y volatilidad
+- modo capital completo:
+  - prioriza invertir el capital total en las mejores 1–3 candidatas netas
+  - deja de centrarse solo en mini posiciones por riesgo
+- contraste mejorado en tablas para modo oscuro
 
-Modo capital completo añadido
------------------------------
-- nuevo modo opcional para priorizar invertir el capital total indicado
-- reparte el capital entre las mejores 1–3 candidatas netas
-- usa un reparto ponderado por calidad (Score x R/B neto)
-- pensado para usuarios que no quieren mini posiciones repartidas en demasiadas ideas
+Uso recomendado
+---------------
+- Para empezar: IBEX + continuo filtrado activados
+- Precio mínimo: 3 €
+- Liquidez media mínima 20d: 750.000 €
+- ATR % máximo: 8
+- Capital completo: activado
+- Máx. posiciones: 2
 
-Interpretación
+
+FIX aplicado
+------------
+Este paquete corrige un fallo de empaquetado anterior:
+- ahora sí aparecen en la barra lateral:
+  - Universo
+  - Modo capital completo
+  - Máx. posiciones para capital completo
+
+
+FIX 2 aplicado
 --------------
-- el escáner clásico sigue existiendo
-- pero ahora la app también puede responder a la pregunta:
-  "tengo X euros, ¿en qué 1–3 ideas los pondría?"
+- "Modo capital completo" movido arriba del todo en la barra lateral
+- cuando está activado, la salida principal ya no se centra en muchas ideas:
+  ahora prioriza visualmente solo las 1–3 posiciones elegidas

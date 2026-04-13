@@ -12,6 +12,10 @@ import math
 import numpy as np
 import pandas as pd
 
+DEFAULT_IBEX_TICKERS = ['^IBEX', 'ACS.MC', 'ACX.MC', 'AENA.MC', 'AMS.MC', 'ANA.MC', 'ANE.MC', 'BBVA.MC', 'BKT.MC', 'CABK.MC', 'CLNX.MC', 'COL.MC', 'ELE.MC', 'ENG.MC', 'FDR.MC', 'FER.MC', 'GRF.MC', 'IAG.MC', 'IBE.MC', 'IDR.MC', 'ITX.MC', 'LOG.MC', 'MAP.MC', 'MRL.MC', 'MTS.MC', 'NTGY.MC', 'PUIG.MC', 'RED.MC', 'REP.MC', 'ROVI.MC', 'SAB.MC', 'SAN.MC', 'SCYR.MC', 'SLR.MC', 'TEF.MC', 'UNI.MC', 'VIS.MC']
+FILTERED_CONTINUO_TICKERS = ['CAF.MC', 'CIE.MC', 'DOM.MC', 'EBRO.MC', 'ENC.MC', 'EUSK.MC', 'LOG.MC', 'NHH.MC', 'PRM.MC', 'TLGO.MC', 'VID.MC']
+DEFAULT_WATCHLIST_TEXT = '^IBEX, ACS.MC, ACX.MC, AENA.MC, AMS.MC, ANA.MC, ANE.MC, BBVA.MC, BKT.MC, CABK.MC, CLNX.MC, COL.MC, ELE.MC, ENG.MC, FDR.MC, FER.MC, GRF.MC, IAG.MC, IBE.MC, IDR.MC, ITX.MC, LOG.MC, MAP.MC, MRL.MC, MTS.MC, NTGY.MC, PUIG.MC, RED.MC, REP.MC, ROVI.MC, SAB.MC, SAN.MC, SCYR.MC, SLR.MC, TEF.MC, UNI.MC, VIS.MC, CAF.MC, CIE.MC, DOM.MC, EBRO.MC, ENC.MC, EUSK.MC, LOG.MC, NHH.MC, PRM.MC, TLGO.MC, VID.MC'
+
 
 def parse_watchlist(text: str) -> list[str]:
     if not text:
@@ -148,6 +152,8 @@ def _technical_snapshot(df: pd.DataFrame) -> dict:
     mom_3m = _ret(close, 63)
     vol_annual = _annualized_vol(daily_ret)
     atr_pct = (latest_atr / latest_price * 100.0) if latest_atr and latest_price else np.nan
+    avg_turnover_20 = avg_vol20 * latest_price
+    avg_daily_move_pct = float(close.pct_change().abs().rolling(20).mean().iloc[-1] * 100.0) if len(close) >= 21 else np.nan
 
     return {
         "price": latest_price,
@@ -164,6 +170,8 @@ def _technical_snapshot(df: pd.DataFrame) -> dict:
         "high20": high20,
         "low20": low20,
         "vol_annual": vol_annual,
+        "avg_turnover_20": avg_turnover_20,
+        "avg_daily_move_pct": avg_daily_move_pct,
     }
 
 
@@ -419,6 +427,31 @@ def _position_and_costs(
     }
 
 
+
+
+def _passes_universe_filters(snapshot: dict, config: dict) -> tuple[bool, list[str]]:
+    reasons = []
+    min_price = float(config.get("min_price_filter", 3.0))
+    min_turnover = float(config.get("min_turnover_filter", 750000.0))
+    max_atr_pct = float(config.get("max_atr_pct_filter", 8.0))
+
+    price = float(snapshot["price"])
+    avg_turnover_20 = float(snapshot.get("avg_turnover_20", 0.0) or 0.0)
+    atr_pct = float(snapshot.get("atr_pct", np.nan))
+    avg_daily_move = float(snapshot.get("avg_daily_move_pct", np.nan))
+
+    if price < min_price:
+        reasons.append(f"Precio < {min_price:.2f} €")
+    if avg_turnover_20 < min_turnover:
+        reasons.append(f"Liquidez media 20d < {min_turnover:,.0f} €")
+    if not np.isnan(atr_pct) and atr_pct > max_atr_pct:
+        reasons.append(f"ATR% > {max_atr_pct:.1f}")
+    if not np.isnan(avg_daily_move) and avg_daily_move > max(max_atr_pct * 0.8, 5.5):
+        reasons.append("Movimiento diario medio demasiado alto")
+
+    return len(reasons) == 0, reasons
+
+
 def analyze_ticker(
     ticker: str,
     hist: pd.DataFrame,
@@ -434,6 +467,7 @@ def analyze_ticker(
         hist.columns = hist.columns.get_level_values(0)
 
     snapshot = _technical_snapshot(hist)
+    universe_ok, universe_filter_reasons = _passes_universe_filters(snapshot, config)
     rel_1m, rel_3m = _relative_strength(hist, benchmark_hist)
     score, notes, agreement = _score(snapshot, rel_1m, rel_3m)
     trend = _trend_label(snapshot)
@@ -459,6 +493,7 @@ def analyze_ticker(
         and semaphore == "VERDE"
         and score >= 4.0
         and rel_1m > 0
+        and universe_ok
     )
     costs["operable_neta"] = bool(
         costs["operable"]
@@ -466,9 +501,11 @@ def analyze_ticker(
         and semaphore == "VERDE"
         and score >= 4.0
         and rel_1m > 0
+        and universe_ok
     )
 
     notes_text = "; ".join(notes[:8])
+    filter_notes = "; ".join(universe_filter_reasons) if universe_filter_reasons else "Universe OK"
 
     return {
         "Ticker": ticker,
@@ -501,6 +538,11 @@ def analyze_ticker(
         "Cap.min €": float(costs["capital_min"]),
         "Coste/obj %": float(costs["cost_obj_pct"]),
         "Coste/posic %": float(costs["cost_pos_pct"]),
+        "ATR %": float(snapshot["atr_pct"]) if not np.isnan(snapshot["atr_pct"]) else np.nan,
+        "Volumen medio € 20d": float(snapshot.get("avg_turnover_20", 0.0)),
+        "Mov. diario medio %": float(snapshot.get("avg_daily_move_pct", np.nan)) if not np.isnan(snapshot.get("avg_daily_move_pct", np.nan)) else np.nan,
+        "Filtro universo": "Sí" if universe_ok else "No",
+        "Motivo filtro": filter_notes,
         "Semáforo": semaphore,
         "Operable": "Sí" if costs["operable"] else "No",
         "Operable neta": "Sí" if costs["operable_neta"] else "No",
@@ -542,8 +584,7 @@ def allocate_capital_top(
         return pd.DataFrame()
 
     selected = df.copy()
-    if "Operable neta" in selected.columns:
-        selected = selected[selected["Operable neta"] == "Sí"].copy()
+    selected = selected[selected["Operable neta"] == "Sí"].copy()
     if selected.empty:
         return pd.DataFrame()
 
@@ -552,15 +593,8 @@ def allocate_capital_top(
         ascending=[False, False, False]
     ).head(max_positions).copy()
 
-    if selected.empty:
-        return pd.DataFrame()
-
-    # Prioriza calidad real: score * R/B neto
     raw_weights = (selected["Score"].clip(lower=0.1) * selected["R/B neto"].clip(lower=0.1)).astype(float)
-    if raw_weights.sum() <= 0:
-        weights = pd.Series([1 / len(selected)] * len(selected), index=selected.index)
-    else:
-        weights = raw_weights / raw_weights.sum()
+    weights = raw_weights / raw_weights.sum() if raw_weights.sum() > 0 else pd.Series([1 / len(selected)] * len(selected), index=selected.index)
 
     rows = []
     for idx, row in selected.iterrows():
@@ -571,7 +605,7 @@ def allocate_capital_top(
         allocated_capital = float(total_capital * weights.loc[idx])
 
         shares = max(int(math.floor(allocated_capital / max(price, 0.01))), 0)
-        position_eur = shares * price
+        position_eur = float(shares * price)
         is_spanish = ticker.upper().endswith(".MC")
         tobin_buy = position_eur * tobin_rate if (apply_tobin and is_spanish) else 0.0
         total_cost = float(commission_buy + commission_sell + tobin_buy)
@@ -584,26 +618,26 @@ def allocate_capital_top(
         net_profit_est5 = gross_profit_est5 - total_cost
 
         rows.append({
+            "Ranking capital": 0,
             "Ticker": ticker,
             "Score": float(row["Score"]),
             "R/B neto": float(row["R/B neto"]),
             "Señal": row["Señal"],
             "Peso %": float(weights.loc[idx] * 100.0),
-            "Capital asignado €": float(allocated_capital),
+            "Capital asignado €": allocated_capital,
             "Acciones capital completo": float(shares),
-            "Posición capital completo €": float(position_eur),
-            "Costes capital completo €": float(total_cost),
+            "Posición capital completo €": position_eur,
+            "Costes capital completo €": total_cost,
             "Benef. neto objetivo €": float(net_profit_target),
             "Benef. neto est. 5d €": float(net_profit_est5),
-            "Objetivo": float(target),
-            "Precio actual": float(price),
+            "Precio actual": price,
+            "Objetivo": target,
             "Semáforo": row["Semáforo"],
         })
 
-    alloc_df = pd.DataFrame(rows)
-    alloc_df = alloc_df.sort_values(
+    alloc_df = pd.DataFrame(rows).sort_values(
         ["Score", "R/B neto", "Benef. neto objetivo €"],
         ascending=[False, False, False]
     ).reset_index(drop=True)
-    alloc_df.insert(0, "Ranking capital", range(1, len(alloc_df) + 1))
+    alloc_df["Ranking capital"] = range(1, len(alloc_df) + 1)
     return alloc_df
