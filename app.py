@@ -86,6 +86,41 @@ def get_name_cached(ticker: str) -> str:
         return ticker
 
 
+
+def market_regime_label(bench_hist: pd.DataFrame) -> tuple[str, str, float]:
+    if bench_hist is None or bench_hist.empty or "Close" not in bench_hist.columns or len(bench_hist) < 25:
+        return "No evaluable", "GRIS", 0.0
+    close = pd.to_numeric(bench_hist["Close"], errors="coerce").dropna()
+    if len(close) < 25:
+        return "No evaluable", "GRIS", 0.0
+    sma20 = close.rolling(20).mean().iloc[-1]
+    change_day = float((close.iloc[-1] / close.iloc[-2] - 1.0) * 100.0) if len(close) >= 2 else 0.0
+    if close.iloc[-1] > sma20 and change_day > -0.4:
+        return "Acompaña", "VERDE", change_day
+    if change_day <= -1.0 or close.iloc[-1] < sma20:
+        return "Débil", "ROJO", change_day
+    return "Neutro", "AMARILLO", change_day
+
+
+def day_quality_summary(df: pd.DataFrame, bench_label: str, rb_min_visual: float) -> tuple[str, str, dict]:
+    buenas = int((df["Zona de entrada"] == "Buena").sum()) if "Zona de entrada" in df.columns else 0
+    aceptables_fuertes = int(((df["Zona de entrada"] == "Aceptable") & (df["R/B neto"] >= rb_min_visual)).sum()) if "Zona de entrada" in df.columns else 0
+    rb_ok = int((df["R/B neto"] >= rb_min_visual).sum()) if "R/B neto" in df.columns else 0
+
+    details = {
+        "buenas": buenas,
+        "aceptables_fuertes": aceptables_fuertes,
+        "rb_ok": rb_ok,
+        "mercado": bench_label,
+    }
+
+    if bench_label == "Acompaña" and buenas >= 2 and rb_ok >= 2:
+        return "DÍA FAVORABLE", "VERDE", details
+    if bench_label != "Débil" and buenas >= 1 and rb_ok >= 1:
+        return "DÍA OPERABLE", "AMARILLO", details
+    return "MEJOR ESPERAR", "ROJO", details
+
+
 def build_watchlist_from_presets(include_ibex: bool, include_continuo: bool, custom_text: str) -> str:
     tickers = []
     if include_ibex:
@@ -131,6 +166,13 @@ def build_config() -> dict:
         min_turnover_filter = st.number_input("Liquidez media mínima 20d (€)", min_value=10000.0, max_value=50000000.0, value=750000.0, step=50000.0)
         max_atr_pct_filter = st.number_input("ATR % máximo", min_value=2.0, max_value=20.0, value=8.0, step=0.5)
 
+        st.subheader("Filtro de entrada")
+        entry_extension_max_pct = st.number_input("Máx. extensión sobre SMA20 (%)", min_value=0.5, max_value=10.0, value=2.0, step=0.1)
+        block_extended_entries = st.checkbox("Bloquear compras si la entrada está extendida", value=True)
+
+        st.subheader("Panel visual rápido")
+        rb_visual_min = st.number_input("R/B mínimo visual del día", min_value=1.0, max_value=5.0, value=1.8, step=0.1)
+
     return {
         "capital_total": capital_total,
         "risk_pct": risk_pct / 100.0,
@@ -148,6 +190,9 @@ def build_config() -> dict:
         "min_price_filter": min_price_filter,
         "min_turnover_filter": min_turnover_filter,
         "max_atr_pct_filter": max_atr_pct_filter,
+        "entry_extension_max_pct": entry_extension_max_pct,
+        "block_extended_entries": block_extended_entries,
+        "rb_visual_min": rb_visual_min,
     }
 
 
@@ -204,6 +249,9 @@ def render_detail(result: dict) -> None:
                 ("ATR %", f'{result["ATR %"]:.2f}%'),
                 ("Volumen medio € 20d", format_currency(result["Volumen medio € 20d"])),
                 ("Mov. diario medio %", f'{result["Mov. diario medio %"]:.2f}%'),
+                ("Extensión sobre SMA20", f'{result["Extensión % sobre SMA20"]:.2f}%'),
+                ("Zona de entrada", result["Zona de entrada"]),
+                ("Entrada extendida", result["Entrada extendida"]),
                 ("Filtro universo", result["Filtro universo"]),
                 ("Motivo filtro", result["Motivo filtro"]),
             ],
@@ -248,6 +296,7 @@ def style_scan_table(df: pd.DataFrame) -> pd.io.formats.style.Styler:
         "ATR %": "{:,.2f}%",
         "Volumen medio € 20d": "{:,.0f}",
         "Mov. diario medio %": "{:,.2f}%",
+        "Extensión % sobre SMA20": "{:,.2f}%",
     }
     return df.style.apply(row_color, axis=1).format(fmt)
 
@@ -306,6 +355,9 @@ def scan_watchlist_ui(config: dict) -> None:
         df_all = pd.DataFrame(results)
         df_all = df_all.sort_values(["Score", "R/B neto", "Rel. 1m"], ascending=[False, False, False]).reset_index(drop=True)
 
+        bench_ref = "^IBEX" if bool(config.get("include_ibex", True)) else "SPY"
+        bench_label, bench_color, bench_change = market_regime_label(bench_data.get(bench_ref))
+
         filtered_out = df_all[df_all["Filtro universo"] == "No"].copy()
         df = df_all[df_all["Filtro universo"] == "Sí"].copy()
         df.insert(0, "Ranking", range(1, len(df) + 1))
@@ -327,6 +379,26 @@ def scan_watchlist_ui(config: dict) -> None:
             return
 
         st.session_state["last_scan_df"] = df.copy()
+
+        day_label, day_color, day_details = day_quality_summary(
+            df=df,
+            bench_label=bench_label,
+            rb_min_visual=float(config.get("rb_visual_min", 1.8)),
+        )
+
+        st.markdown("### Lectura rápida del día")
+        d1, d2, d3, d4 = st.columns(4)
+        d1.markdown(status_badge(day_color, day_label), unsafe_allow_html=True)
+        d2.metric("Mercado", f"{bench_label} ({bench_change:+.2f}%)")
+        d3.metric("Zonas 'Buena'", int(day_details["buenas"]))
+        d4.metric(f"R/B ≥ {float(config.get('rb_visual_min', 1.8)):.1f}", int(day_details["rb_ok"]))
+
+        if day_label == "DÍA FAVORABLE":
+            st.success("Hay contexto y timing razonables. Si además el precio a las 10:30 no se ha disparado, es un día bueno para actuar.")
+        elif day_label == "DÍA OPERABLE":
+            st.warning("Hay alguna opción utilizable, pero no es un día perfecto. Mejor concentrarte en 1 idea y ser exigente con la entrada.")
+        else:
+            st.error("La lectura rápida del día no es buena. Mejor esperar salvo que tengas una señal muy clara y excepcional.")
 
         top3 = df.head(3).copy()
         st.markdown("### TOP 3 DEL DÍA" if not config.get("capital_mode", False) else "### TOP 3 BASE (antes del reparto de capital)")
@@ -380,11 +452,26 @@ def scan_watchlist_ui(config: dict) -> None:
                 st.dataframe(alloc_df.style.format(fmt_alloc), hide_index=True, use_container_width=True)
                 st.caption("Aquí el sistema reparte el capital total entre las mejores 1–3 candidatas netas y la salida principal se centra en ellas.")
 
+        def quick_action(row):
+            rb_min = float(config.get("rb_visual_min", 1.8))
+            zone = row.get("Zona de entrada", "")
+            rb = float(row.get("R/B neto", 0.0))
+            sem = row.get("Semáforo", "")
+            if sem == "VERDE" and zone == "Buena" and rb >= rb_min:
+                return "ENTRAR"
+            if sem == "VERDE" and zone == "Aceptable" and rb >= rb_min:
+                return "MIRAR"
+            return "ESPERAR"
+
+        df = df.copy()
+        df["Acción rápida"] = df.apply(quick_action, axis=1)
+
         columns_to_show = [
-            "Ranking", "Ticker", "Precio actual", "Score", "Señal", "Tendencia", "Confianza",
+            "Ranking", "Ticker", "Acción rápida", "Precio actual", "Score", "Señal", "Tendencia", "Confianza",
             "Rel. 1m", "Rel. 3m", "Est. 5d", "Est. 20d", "Stop", "Objetivo", "Dist.stop",
             "R/B", "R/B neto", "Costes", "Coste/obj %", "Coste/posic %", "Posic. €",
             "Benef. neto €", "Cap.min €", "ATR %", "Volumen medio € 20d", "Mov. diario medio %",
+            "Extensión % sobre SMA20", "Zona de entrada", "Entrada extendida",
             "Semáforo", "Operable", "Operable neta"
         ]
 
@@ -463,6 +550,9 @@ def quick_help_ui() -> None:
         - Ahora puedes mezclar IBEX + continuo filtrado.
         - El filtro de universo intenta evitar chicharros mediante precio mínimo, liquidez mínima y ATR % máximo.
         - El modo capital completo reparte el capital total entre las mejores 1–3 candidatas netas.
+        - El filtro de entrada detecta si compras demasiado lejos de la SMA20 y puede bloquear esas entradas extendidas.
+        - El panel visual rápido te resume el día en: DÍA FAVORABLE / DÍA OPERABLE / MEJOR ESPERAR.
+        - La columna "Acción rápida" te ayuda a ver de un vistazo si conviene ENTRAR, MIRAR o ESPERAR.
         """
     )
 

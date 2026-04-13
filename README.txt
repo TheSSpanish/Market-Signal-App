@@ -136,3 +136,28 @@ FIX 2 aplicado
 - "Modo capital completo" movido arriba del todo en la barra lateral
 - cuando está activado, la salida principal ya no se centra en muchas ideas:
   ahora prioriza visualmente solo las 1–3 posiciones elegidas
+
+
+FIX 3 aplicado
+--------------
+- nuevo filtro de entrada por extensión sobre SMA20
+- nueva columna: "Extensión % sobre SMA20"
+- nueva columna: "Zona de entrada" (Buena / Aceptable / Extendida)
+- opción para bloquear automáticamente compras extendidas
+- pensado para evitar perseguir precio en zonas malas de entrada
+
+
+Panel visual rápido añadido
+---------------------------
+- lectura rápida del día:
+  - DÍA FAVORABLE
+  - DÍA OPERABLE
+  - MEJOR ESPERAR
+- usa:
+  - contexto de mercado
+  - número de zonas 'Buena'
+  - número de candidatas con R/B por encima del umbral visual
+- nueva columna: Acción rápida
+  - ENTRAR
+  - MIRAR
+  - ESPERAR

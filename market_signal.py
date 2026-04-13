@@ -429,6 +429,28 @@ def _position_and_costs(
 
 
 
+
+def _entry_extension_status(snapshot: dict, config: dict) -> tuple[float, bool, str]:
+    price = float(snapshot["price"])
+    sma20 = float(snapshot["sma20"])
+    threshold_pct = float(config.get("entry_extension_max_pct", 2.0))
+
+    if sma20 <= 0 or pd.isna(sma20):
+        return 0.0, False, "No evaluable"
+
+    ext_pct = (price / sma20 - 1.0) * 100.0
+    is_extended = ext_pct > threshold_pct
+
+    if ext_pct <= 1.0:
+        label = "Buena"
+    elif ext_pct <= threshold_pct:
+        label = "Aceptable"
+    else:
+        label = "Extendida"
+
+    return float(ext_pct), bool(is_extended), label
+
+
 def _passes_universe_filters(snapshot: dict, config: dict) -> tuple[bool, list[str]]:
     reasons = []
     min_price = float(config.get("min_price_filter", 3.0))
@@ -468,6 +490,7 @@ def analyze_ticker(
 
     snapshot = _technical_snapshot(hist)
     universe_ok, universe_filter_reasons = _passes_universe_filters(snapshot, config)
+    entry_ext_pct, entry_is_extended, entry_zone = _entry_extension_status(snapshot, config)
     rel_1m, rel_3m = _relative_strength(hist, benchmark_hist)
     score, notes, agreement = _score(snapshot, rel_1m, rel_3m)
     trend = _trend_label(snapshot)
@@ -488,12 +511,16 @@ def analyze_ticker(
 
     costs = _position_and_costs(ticker, price, stop, target, config)
 
+    block_extended = bool(config.get("block_extended_entries", True))
+    extension_ok = (not entry_is_extended) or (not block_extended)
+
     costs["operable"] = bool(
         costs["operable"]
         and semaphore == "VERDE"
         and score >= 4.0
         and rel_1m > 0
         and universe_ok
+        and extension_ok
     )
     costs["operable_neta"] = bool(
         costs["operable"]
@@ -502,8 +529,11 @@ def analyze_ticker(
         and score >= 4.0
         and rel_1m > 0
         and universe_ok
+        and extension_ok
     )
 
+    if entry_is_extended:
+        notes.append(f"Entrada extendida: +{entry_ext_pct:.2f}% sobre SMA20")
     notes_text = "; ".join(notes[:8])
     filter_notes = "; ".join(universe_filter_reasons) if universe_filter_reasons else "Universe OK"
 
@@ -541,6 +571,9 @@ def analyze_ticker(
         "ATR %": float(snapshot["atr_pct"]) if not np.isnan(snapshot["atr_pct"]) else np.nan,
         "Volumen medio € 20d": float(snapshot.get("avg_turnover_20", 0.0)),
         "Mov. diario medio %": float(snapshot.get("avg_daily_move_pct", np.nan)) if not np.isnan(snapshot.get("avg_daily_move_pct", np.nan)) else np.nan,
+        "Extensión % sobre SMA20": float(entry_ext_pct),
+        "Zona de entrada": entry_zone,
+        "Entrada extendida": "Sí" if entry_is_extended else "No",
         "Filtro universo": "Sí" if universe_ok else "No",
         "Motivo filtro": filter_notes,
         "Semáforo": semaphore,
