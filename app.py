@@ -12,6 +12,10 @@ from market_signal import (
     DEFAULT_IBEX_TICKERS,
     FILTERED_CONTINUO_TICKERS,
     DEFAULT_WATCHLIST_TEXT,
+    DEFAULT_USA_NASDAQ_WATCHLIST_TEXT,
+    DEFAULT_USA_SP500_WATCHLIST_TEXT,
+    USA_NASDAQ100_FILTERED_TICKERS,
+    USA_SP500_FILTERED_TICKERS,
     allocate_capital_top,
     analyze_ticker,
     benchmark_for_ticker,
@@ -124,12 +128,32 @@ def day_quality_summary(df: pd.DataFrame, bench_label: str, rb_min_visual: float
     return "MEJOR ESPERAR", "ROJO", details
 
 
-def build_watchlist_from_presets(include_ibex: bool, include_continuo: bool, custom_text: str) -> str:
+def build_watchlist_from_presets(
+    universe_mode: str,
+    include_ibex: bool,
+    include_continuo: bool,
+    include_sp500: bool,
+    include_nasdaq100: bool,
+    custom_text: str,
+) -> str:
     tickers = []
-    if include_ibex:
-        tickers.extend(DEFAULT_IBEX_TICKERS)
-    if include_continuo:
-        tickers.extend(FILTERED_CONTINUO_TICKERS)
+    if universe_mode == "España":
+        if include_ibex:
+            tickers.extend(DEFAULT_IBEX_TICKERS)
+        if include_continuo:
+            tickers.extend(FILTERED_CONTINUO_TICKERS)
+    elif universe_mode == "S&P 500":
+        if include_sp500:
+            tickers.extend(USA_SP500_FILTERED_TICKERS)
+    elif universe_mode == "Nasdaq 100":
+        if include_nasdaq100:
+            tickers.extend(USA_NASDAQ100_FILTERED_TICKERS)
+    elif universe_mode == "USA combinado":
+        if include_sp500:
+            tickers.extend(USA_SP500_FILTERED_TICKERS)
+        if include_nasdaq100:
+            tickers.extend(USA_NASDAQ100_FILTERED_TICKERS)
+
     tickers.extend(parse_watchlist(custom_text))
     return ", ".join(parse_watchlist(", ".join(tickers)))
 
@@ -163,8 +187,15 @@ def build_config() -> dict:
             st.info("Modo exigente activo: Coste/obj 25 | Coste/posic 1.0 | R/B neto 2.0")
 
         st.subheader("Universo")
-        include_ibex = st.checkbox("Incluir IBEX", value=True)
-        include_continuo = st.checkbox("Incluir continuo filtrado", value=True)
+        universe_mode = st.selectbox(
+            "Mercado / universo",
+            options=["España", "S&P 500", "Nasdaq 100", "USA combinado"],
+            index=0,
+        )
+        include_ibex = st.checkbox("Incluir IBEX", value=True, disabled=(universe_mode != "España"))
+        include_continuo = st.checkbox("Incluir continuo filtrado", value=True, disabled=(universe_mode != "España"))
+        include_sp500 = st.checkbox("Incluir S&P 500 filtrado", value=True, disabled=(universe_mode not in ["S&P 500", "USA combinado"]))
+        include_nasdaq100 = st.checkbox("Incluir Nasdaq 100 filtrado", value=True, disabled=(universe_mode not in ["Nasdaq 100", "USA combinado"]))
         min_price_filter = st.number_input("Precio mínimo (€)", min_value=0.1, max_value=100.0, value=3.0, step=0.5)
         min_turnover_filter = st.number_input("Liquidez media mínima 20d (€)", min_value=10000.0, max_value=50000000.0, value=750000.0, step=50000.0)
         max_atr_pct_filter = st.number_input("ATR % máximo", min_value=2.0, max_value=20.0, value=8.0, step=0.5)
@@ -189,8 +220,11 @@ def build_config() -> dict:
         "cost_obj_max_pct": cost_obj_max,
         "cost_pos_max_pct": cost_pos_max,
         "rb_net_min": rb_net_min,
+        "universe_mode": universe_mode,
         "include_ibex": include_ibex,
         "include_continuo": include_continuo,
+        "include_sp500": include_sp500,
+        "include_nasdaq100": include_nasdaq100,
         "min_price_filter": min_price_filter,
         "min_turnover_filter": min_turnover_filter,
         "max_atr_pct_filter": max_atr_pct_filter,
@@ -317,11 +351,14 @@ def scan_watchlist_ui(config: dict) -> None:
     )
 
     built_watchlist = build_watchlist_from_presets(
+        universe_mode=str(config.get("universe_mode", "España")),
         include_ibex=bool(config.get("include_ibex", True)),
         include_continuo=bool(config.get("include_continuo", True)),
+        include_sp500=bool(config.get("include_sp500", False)),
+        include_nasdaq100=bool(config.get("include_nasdaq100", False)),
         custom_text=watchlist_text,
     )
-    st.caption(f"Universo activo: {built_watchlist}")
+    st.caption(f"Universo activo ({config.get('universe_mode', 'España')}): {built_watchlist}")
 
     c1, c2, c3 = st.columns([1, 1, 1.2])
     only_operable = c1.checkbox("Solo candidatas operables", value=False)
@@ -360,7 +397,10 @@ def scan_watchlist_ui(config: dict) -> None:
         df_all = pd.DataFrame(results)
         df_all = df_all.sort_values(["Score", "R/B neto", "Rel. 1m"], ascending=[False, False, False]).reset_index(drop=True)
 
-        bench_ref = "^IBEX" if bool(config.get("include_ibex", True)) else "SPY"
+        if str(config.get("universe_mode", "España")) == "España":
+            bench_ref = "^IBEX"
+        else:
+            bench_ref = "SPY"
         bench_label, bench_color, bench_change = market_regime_label(bench_data.get(bench_ref))
 
         filtered_out = df_all[df_all["Filtro universo"] == "No"].copy()
@@ -565,6 +605,8 @@ def quick_help_ui() -> None:
         - El panel visual rápido te resume el día en: DÍA FAVORABLE / DÍA OPERABLE / MEJOR ESPERAR.
         - La columna "Acción rápida" te ayuda a ver de un vistazo si conviene ENTRAR, MIRAR o ESPERAR.
         - Si activas el bloqueo de mercado débil, la app corta directamente las compras en días malos de mercado.
+        - Ahora puedes elegir universos separados: España, S&P 500, Nasdaq 100 o USA combinado.
+        - Para USA el benchmark visual pasa a ser SPY.
         """
     )
 

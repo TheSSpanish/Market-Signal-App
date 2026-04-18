@@ -171,3 +171,19 @@ FIX 4 aplicado
 - si el mercado sale débil y el bloqueo está activo:
   - muestra "HOY NO OPERAR"
   - corta la operativa del día
+
+
+Expansión de universos añadida
+------------------------------
+- selector de universo en la barra lateral:
+  - España
+  - S&P 500
+  - Nasdaq 100
+  - USA combinado
+- nuevas listas USA filtradas para no meter todo el mercado de golpe
+- el benchmark visual pasa a:
+  - ^IBEX para España
+  - SPY para USA
+Recomendación:
+- empezar con España o Nasdaq 100
+- no mezclarlo todo al principio
