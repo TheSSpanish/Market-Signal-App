@@ -187,3 +187,13 @@ Expansión de universos añadida
 Recomendación:
 - empezar con España o Nasdaq 100
 - no mezclarlo todo al principio
+
+
+Precio actual intradía añadido
+------------------------------
+- el análisis técnico principal sigue en diario
+- pero el precio usado para entrada pasa a ser intradía cuando hay dato disponible
+- nuevas columnas:
+  - Fuente precio
+  - Hora precio
+- así la app deja de tomar por defecto el cierre de ayer cuando el mercado ya está abierto

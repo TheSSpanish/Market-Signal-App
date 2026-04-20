@@ -445,6 +445,26 @@ def _position_and_costs(
 
 
 
+
+def _apply_current_price_to_snapshot(snapshot: dict, current_price: float | None) -> dict:
+    if current_price is None or pd.isna(current_price) or current_price <= 0:
+        return snapshot
+
+    snap = dict(snapshot)
+    old_price = float(snap.get("price", current_price) or current_price)
+    old_turnover = float(snap.get("avg_turnover_20", 0.0) or 0.0)
+    avg_vol20_est = (old_turnover / old_price) if old_price > 0 else 0.0
+
+    snap["price"] = float(current_price)
+    atr_val = float(snap.get("atr", np.nan))
+    if not np.isnan(atr_val) and current_price > 0:
+        snap["atr_pct"] = float((atr_val / current_price) * 100.0)
+    if avg_vol20_est > 0:
+        snap["avg_turnover_20"] = float(avg_vol20_est * current_price)
+
+    return snap
+
+
 def _entry_extension_status(snapshot: dict, config: dict) -> tuple[float, bool, str]:
     price = float(snapshot["price"])
     sma20 = float(snapshot["sma20"])
@@ -495,6 +515,8 @@ def analyze_ticker(
     benchmark_hist: pd.DataFrame | None,
     display_name: str,
     config: dict,
+    current_price: float | None = None,
+    current_price_time: str | None = None,
 ) -> dict | None:
     if hist is None or hist.empty:
         return None
@@ -504,6 +526,7 @@ def analyze_ticker(
         hist.columns = hist.columns.get_level_values(0)
 
     snapshot = _technical_snapshot(hist)
+    snapshot = _apply_current_price_to_snapshot(snapshot, current_price)
     universe_ok, universe_filter_reasons = _passes_universe_filters(snapshot, config)
     entry_ext_pct, entry_is_extended, entry_zone = _entry_extension_status(snapshot, config)
     rel_1m, rel_3m = _relative_strength(hist, benchmark_hist)

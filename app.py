@@ -81,6 +81,41 @@ def get_history_cached(ticker: str, period: str = "1y") -> pd.DataFrame:
     return data.dropna(how="all")
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def get_current_price_cached(ticker: str) -> tuple[float | None, str | None]:
+    try:
+        intraday = yf.download(
+            tickers=ticker,
+            period="1d",
+            interval="1m",
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+            prepost=False,
+        )
+        if intraday is not None and not intraday.empty:
+            if isinstance(intraday.columns, pd.MultiIndex):
+                intraday.columns = intraday.columns.get_level_values(0)
+            last_close = pd.to_numeric(intraday["Close"], errors="coerce").dropna()
+            if not last_close.empty:
+                ts = last_close.index[-1]
+                price = float(last_close.iloc[-1])
+                time_text = pd.Timestamp(ts).strftime("%Y-%m-%d %H:%M")
+                return price, time_text
+    except Exception:
+        pass
+
+    try:
+        info = yf.Ticker(ticker).fast_info
+        price = info.get("lastPrice") or info.get("regularMarketPrice")
+        if price:
+            return float(price), "Tiempo real aprox."
+    except Exception:
+        pass
+
+    return None, None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_name_cached(ticker: str) -> str:
     try:
@@ -253,6 +288,7 @@ def render_detail(result: dict) -> None:
     c2.metric("Score", f'{result["Score"]:.2f}')
     c3.metric("Señal", result["Señal"])
     c4.markdown(status_badge(result["Semáforo"], result["Semáforo"]), unsafe_allow_html=True)
+    st.caption(f"Precio usado: {result.get('Fuente precio', 'Diario')} | Hora: {result.get('Hora precio', 'N/D')}")
 
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("Tendencia", result["Tendencia"])
@@ -378,12 +414,15 @@ def scan_watchlist_ui(config: dict) -> None:
             for ticker in tickers:
                 try:
                     hist = get_history_cached(ticker)
+                    current_price, current_price_time = get_current_price_cached(ticker)
                     result = analyze_ticker(
                         ticker=ticker,
                         hist=hist,
                         benchmark_hist=bench_data.get(benchmark_for_ticker(ticker)),
                         display_name=get_name_cached(ticker),
                         config=config,
+                        current_price=current_price,
+                        current_price_time=current_price_time,
                     )
                     if result:
                         results.append(result)
@@ -518,7 +557,7 @@ def scan_watchlist_ui(config: dict) -> None:
         df["Acción rápida"] = df.apply(quick_action, axis=1)
 
         columns_to_show = [
-            "Ranking", "Ticker", "Acción rápida", "Precio actual", "Score", "Señal", "Tendencia", "Confianza",
+            "Ranking", "Ticker", "Acción rápida", "Precio actual", "Fuente precio", "Hora precio", "Score", "Señal", "Tendencia", "Confianza",
             "Rel. 1m", "Rel. 3m", "Est. 5d", "Est. 20d", "Stop", "Objetivo", "Dist.stop",
             "R/B", "R/B neto", "Costes", "Coste/obj %", "Coste/posic %", "Posic. €",
             "Benef. neto €", "Cap.min €", "ATR %", "Volumen medio € 20d", "Mov. diario medio %",
@@ -575,12 +614,15 @@ def individual_analysis_ui(config: dict) -> None:
         with st.spinner("Calculando análisis..."):
             hist = get_history_cached(ticker)
             bench = get_history_cached(benchmark_for_ticker(ticker))
+            current_price, current_price_time = get_current_price_cached(ticker)
             result = analyze_ticker(
                 ticker=ticker,
                 hist=hist,
                 benchmark_hist=bench,
                 display_name=get_name_cached(ticker),
                 config=config,
+                current_price=current_price,
+                current_price_time=current_price_time,
             )
         if not result:
             st.error("No se pudo analizar el ticker.")
@@ -607,6 +649,7 @@ def quick_help_ui() -> None:
         - Si activas el bloqueo de mercado débil, la app corta directamente las compras en días malos de mercado.
         - Ahora puedes elegir universos separados: España, S&P 500, Nasdaq 100 o USA combinado.
         - Para USA el benchmark visual pasa a ser SPY.
+        - El bot ahora usa precio intradía para la entrada cuando hay dato disponible, manteniendo el análisis técnico principal en diario.
         """
     )
 
