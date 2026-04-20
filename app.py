@@ -313,7 +313,7 @@ def status_badge(color: str, label: str) -> str:
 
 def render_detail(result: dict) -> None:
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Precio actual", format_currency(result["Precio actual"]))
+    c1.metric("Precio actual", "Máx. entrada válida", "Tolerancia %", format_currency(result["Precio actual"]))
     c2.metric("Score", f'{result["Score"]:.2f}')
     c3.metric("Señal", result["Señal"])
     c4.markdown(status_badge(result["Semáforo"], result["Semáforo"]), unsafe_allow_html=True)
@@ -490,7 +490,7 @@ def scan_watchlist_ui(config: dict) -> None:
             if not filtered_out.empty:
                 st.markdown("#### Valores descartados por filtro de universo")
                 st.dataframe(
-                    filtered_out[["Ticker", "Precio actual", "Volumen medio € 20d", "ATR %", "Motivo filtro"]].head(15),
+                    filtered_out[["Ticker", "Precio actual", "Máx. entrada válida", "Tolerancia %", "Volumen medio € 20d", "ATR %", "Motivo filtro"]].head(15),
                     hide_index=True,
                     use_container_width=True,
                 )
@@ -591,7 +591,7 @@ def scan_watchlist_ui(config: dict) -> None:
         df["Acción rápida"] = df.apply(quick_action, axis=1)
 
         columns_to_show = [
-            "Ranking", "Ticker", "Acción rápida", "Precio actual", "Fuente precio", "Hora precio", "Score", "Señal", "Tendencia", "Confianza",
+            "Ranking", "Ticker", "Acción rápida", "Precio actual", "Máx. entrada válida", "Tolerancia %", "Fuente precio", "Hora precio", "Score", "Señal", "Tendencia", "Confianza",
             "Rel. 1m", "Rel. 3m", "Est. 5d", "Est. 20d", "Stop", "Objetivo", "Dist.stop",
             "R/B", "R/B neto", "Costes", "Coste/obj %", "Coste/posic %", "Posic. €",
             "Benef. neto €", "Cap.min €", "ATR %", "Volumen medio € 20d", "Mov. diario medio %",
@@ -614,7 +614,7 @@ def scan_watchlist_ui(config: dict) -> None:
         if not filtered_out.empty:
             with st.expander("Ver valores descartados por filtro de universo"):
                 st.dataframe(
-                    filtered_out[["Ticker", "Precio actual", "Volumen medio € 20d", "ATR %", "Mov. diario medio %", "Motivo filtro"]],
+                    filtered_out[["Ticker", "Precio actual", "Máx. entrada válida", "Tolerancia %", "Volumen medio € 20d", "ATR %", "Mov. diario medio %", "Motivo filtro"]],
                     hide_index=True,
                     use_container_width=True,
                 )

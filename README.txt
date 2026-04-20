@@ -200,3 +200,9 @@ Integración Finnhub de precio actual
   - Hora precio
 Objetivo:
 - que la entrada se base en precio realmente actual, no en cierre previo.
+
+
+Corrección aplicada
+-------------------
+- arreglado el error de sintaxis de `from __future__ import annotations`
+- `market_signal.py` ya debería abrir sin ese fallo en Windows

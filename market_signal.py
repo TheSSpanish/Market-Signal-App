@@ -1,5 +1,13 @@
-
 from __future__ import annotations
+def compute_entry_tolerance(atr_pct):
+    if atr_pct < 3:
+        return 0.004
+    elif atr_pct < 6:
+        return 0.006
+    else:
+        return 0.008
+
+
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -580,6 +588,8 @@ def analyze_ticker(
         "Nombre": display_name or ticker,
         "Benchmark": benchmark_for_ticker(ticker),
         "Precio actual": float(price),
+        "Tolerancia %": round(compute_entry_tolerance(snapshot.get("atr_pct", 5.0))*100,2),
+        "Máx. entrada válida": round(float(price*(1+compute_entry_tolerance(snapshot.get("atr_pct",5.0)))),2),
         "Hora precio": current_price_time if current_price_time is not None else "Cierre diario",
         "Fuente precio": current_price_source if current_price_source is not None else ("Intradía" if current_price is not None else "Diario"),
         "Score": float(score),
