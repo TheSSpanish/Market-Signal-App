@@ -189,11 +189,14 @@ Recomendación:
 - no mezclarlo todo al principio
 
 
-Precio actual intradía añadido
-------------------------------
-- el análisis técnico principal sigue en diario
-- pero el precio usado para entrada pasa a ser intradía cuando hay dato disponible
-- nuevas columnas:
+Integración Finnhub de precio actual
+------------------------------------
+- proveedor principal de precio actual: Finnhub
+- mapeo de tickers españoles:
+  - ENG.MC -> BME:ENG
+- si Finnhub falla, usa Yahoo fallback
+- se muestran:
   - Fuente precio
   - Hora precio
-- así la app deja de tomar por defecto el cierre de ayer cuando el mercado ya está abierto
+Objetivo:
+- que la entrada se base en precio realmente actual, no en cierre previo.

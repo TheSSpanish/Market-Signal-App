@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+import requests
 import streamlit as st
 import yfinance as yf
 
@@ -81,18 +82,39 @@ def get_history_cached(ticker: str, period: str = "1y") -> pd.DataFrame:
     return data.dropna(how="all")
 
 
-@st.cache_data(ttl=120, show_spinner=False)
-def get_current_price_cached(ticker: str) -> tuple[float | None, str | None]:
+
+def finnhub_symbol_for_ticker(ticker: str) -> str:
+    t = ticker.upper().strip()
+    if t.endswith(".MC"):
+        return "BME:" + t.replace(".MC", "")
+    return t
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def get_current_price_cached(ticker: str, provider: str, finnhub_api_key: str) -> tuple[float | None, str | None, str | None]:
+    # 1) Finnhub
+    if provider == "Finnhub" and finnhub_api_key:
+        try:
+            symbol = finnhub_symbol_for_ticker(ticker)
+            r = requests.get(
+                "https://finnhub.io/api/v1/quote",
+                params={"symbol": symbol, "token": finnhub_api_key},
+                timeout=8,
+            )
+            if r.ok:
+                data = r.json()
+                current = data.get("c")
+                ts = data.get("t")
+                if current and float(current) > 0:
+                    time_text = pd.to_datetime(int(ts), unit="s").strftime("%Y-%m-%d %H:%M") if ts else "Finnhub"
+                    return float(current), time_text, "Finnhub"
+        except Exception:
+            pass
+
+    # 2) Yahoo fallback intradía
     try:
-        intraday = yf.download(
-            tickers=ticker,
-            period="1d",
-            interval="1m",
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-            prepost=False,
-        )
+        t = yf.Ticker(ticker)
+        intraday = t.history(period="1d", interval="1m", auto_adjust=False, prepost=False)
         if intraday is not None and not intraday.empty:
             if isinstance(intraday.columns, pd.MultiIndex):
                 intraday.columns = intraday.columns.get_level_values(0)
@@ -101,19 +123,20 @@ def get_current_price_cached(ticker: str) -> tuple[float | None, str | None]:
                 ts = last_close.index[-1]
                 price = float(last_close.iloc[-1])
                 time_text = pd.Timestamp(ts).strftime("%Y-%m-%d %H:%M")
-                return price, time_text
+                return price, time_text, "Yahoo 1m"
     except Exception:
         pass
 
+    # 3) last fallback
     try:
         info = yf.Ticker(ticker).fast_info
-        price = info.get("lastPrice") or info.get("regularMarketPrice")
+        price = info.get("regularMarketPrice") or info.get("lastPrice") or info.get("previousClose")
         if price:
-            return float(price), "Tiempo real aprox."
+            return float(price), "Fallback", "Yahoo meta"
     except Exception:
         pass
 
-    return None, None
+    return None, None, None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -243,6 +266,10 @@ def build_config() -> dict:
         rb_visual_min = st.number_input("R/B mínimo visual del día", min_value=1.0, max_value=5.0, value=1.8, step=0.1)
         block_bad_market = st.checkbox("Bloquear compras si el mercado está débil", value=True)
 
+        st.subheader("Precio actual")
+        price_provider = st.selectbox("Proveedor de precio actual", options=["Finnhub", "Yahoo fallback"], index=0)
+        finnhub_api_key = st.text_input("Finnhub API key", value="d7iu1g1r01qn2qavdqu0d7iu1g1r01qn2qavdqug", type="password")
+
     return {
         "capital_total": capital_total,
         "risk_pct": risk_pct / 100.0,
@@ -267,6 +294,8 @@ def build_config() -> dict:
         "block_extended_entries": block_extended_entries,
         "rb_visual_min": rb_visual_min,
         "block_bad_market": block_bad_market,
+        "price_provider": price_provider,
+        "finnhub_api_key": finnhub_api_key,
     }
 
 
@@ -288,7 +317,7 @@ def render_detail(result: dict) -> None:
     c2.metric("Score", f'{result["Score"]:.2f}')
     c3.metric("Señal", result["Señal"])
     c4.markdown(status_badge(result["Semáforo"], result["Semáforo"]), unsafe_allow_html=True)
-    st.caption(f"Precio usado: {result.get('Fuente precio', 'Diario')} | Hora: {result.get('Hora precio', 'N/D')}")
+    st.caption(f"Precio usado: {result.get('Fuente precio', 'N/D')} | Hora: {result.get('Hora precio', 'N/D')}")
 
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("Tendencia", result["Tendencia"])
@@ -414,7 +443,11 @@ def scan_watchlist_ui(config: dict) -> None:
             for ticker in tickers:
                 try:
                     hist = get_history_cached(ticker)
-                    current_price, current_price_time = get_current_price_cached(ticker)
+                    current_price, current_price_time, current_price_source = get_current_price_cached(
+                        ticker=ticker,
+                        provider=str(config.get("price_provider", "Finnhub")),
+                        finnhub_api_key=str(config.get("finnhub_api_key", "")),
+                    )
                     result = analyze_ticker(
                         ticker=ticker,
                         hist=hist,
@@ -423,6 +456,7 @@ def scan_watchlist_ui(config: dict) -> None:
                         config=config,
                         current_price=current_price,
                         current_price_time=current_price_time,
+                        current_price_source=current_price_source,
                     )
                     if result:
                         results.append(result)
@@ -571,9 +605,11 @@ def scan_watchlist_ui(config: dict) -> None:
             df_main = df_main.sort_values(["Score", "R/B neto", "Rel. 1m"], ascending=[False, False, False]).reset_index(drop=True)
             df_main.insert(0, "Ranking visible", range(1, len(df_main) + 1))
             st.markdown("### Resumen de las posiciones elegidas")
-            st.dataframe(style_scan_table(df_main[columns_to_show]), hide_index=True, use_container_width=True)
+            available_cols = [col for col in columns_to_show if col in df_main.columns]
+            st.dataframe(style_scan_table(df_main[available_cols]), hide_index=True, use_container_width=True)
         else:
-            st.dataframe(style_scan_table(df[columns_to_show]), hide_index=True, use_container_width=True)
+            available_cols = [col for col in columns_to_show if col in df.columns]
+            st.dataframe(style_scan_table(df[available_cols]), hide_index=True, use_container_width=True)
 
         if not filtered_out.empty:
             with st.expander("Ver valores descartados por filtro de universo"):
@@ -614,7 +650,11 @@ def individual_analysis_ui(config: dict) -> None:
         with st.spinner("Calculando análisis..."):
             hist = get_history_cached(ticker)
             bench = get_history_cached(benchmark_for_ticker(ticker))
-            current_price, current_price_time = get_current_price_cached(ticker)
+            current_price, current_price_time, current_price_source = get_current_price_cached(
+                ticker=ticker,
+                provider=str(config.get("price_provider", "Finnhub")),
+                finnhub_api_key=str(config.get("finnhub_api_key", "")),
+            )
             result = analyze_ticker(
                 ticker=ticker,
                 hist=hist,
@@ -623,6 +663,7 @@ def individual_analysis_ui(config: dict) -> None:
                 config=config,
                 current_price=current_price,
                 current_price_time=current_price_time,
+                current_price_source=current_price_source,
             )
         if not result:
             st.error("No se pudo analizar el ticker.")
@@ -649,7 +690,7 @@ def quick_help_ui() -> None:
         - Si activas el bloqueo de mercado débil, la app corta directamente las compras en días malos de mercado.
         - Ahora puedes elegir universos separados: España, S&P 500, Nasdaq 100 o USA combinado.
         - Para USA el benchmark visual pasa a ser SPY.
-        - El bot ahora usa precio intradía para la entrada cuando hay dato disponible, manteniendo el análisis técnico principal en diario.
+        - El precio actual puede salir de Finnhub o, si falla, de Yahoo fallback.
         """
     )
 

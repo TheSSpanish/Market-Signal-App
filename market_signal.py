@@ -461,7 +461,6 @@ def _apply_current_price_to_snapshot(snapshot: dict, current_price: float | None
         snap["atr_pct"] = float((atr_val / current_price) * 100.0)
     if avg_vol20_est > 0:
         snap["avg_turnover_20"] = float(avg_vol20_est * current_price)
-
     return snap
 
 
@@ -517,6 +516,7 @@ def analyze_ticker(
     config: dict,
     current_price: float | None = None,
     current_price_time: str | None = None,
+    current_price_source: str | None = None,
 ) -> dict | None:
     if hist is None or hist.empty:
         return None
@@ -580,6 +580,8 @@ def analyze_ticker(
         "Nombre": display_name or ticker,
         "Benchmark": benchmark_for_ticker(ticker),
         "Precio actual": float(price),
+        "Hora precio": current_price_time if current_price_time is not None else "Cierre diario",
+        "Fuente precio": current_price_source if current_price_source is not None else ("Intradía" if current_price is not None else "Diario"),
         "Score": float(score),
         "Señal": signal,
         "Tendencia": trend,
